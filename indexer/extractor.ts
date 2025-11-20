@@ -47,12 +47,12 @@ function buildStrictChrono() {
 
 const strictChrono = buildStrictChrono();
 
-export function normalize(d: Date, format: string): string {
+export function normalize(d: Date): string {
 	const dd = String(d.getDate()).padStart(2, "0");
 	const mm = String(d.getMonth() + 1).padStart(2, "0");
 	const yyyy = d.getFullYear().toString();
 
-	return format
+	return DATE_FORMAT
 		.replace(/dd/g, dd)
 		.replace(/MM/g, mm)
 		.replace(/yyyy/g, yyyy);
@@ -60,6 +60,8 @@ export function normalize(d: Date, format: string): string {
 
 const ORD = "(st|nd|rd|th)";
 const MONTH = "(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)";
+
+const DATE_FORMAT = "yyyy-MM-dd";
 
 function isLikelyDate(t: string): boolean {
 	const s = t.toLowerCase();
@@ -72,18 +74,18 @@ function isLikelyDate(t: string): boolean {
 	return false;
 }
 
-export function parseAnyDate(text: string, format: string): string | null {
+export function parseAnyDate(text: string): string | null {
 	const flat = flattenForDates(text);
 	if (!isLikelyDate(flat)) return null;
 
 	const parsed = strictChrono.parse(flat);
 	if (parsed.length === 0) return null;
 
-	return normalize(parsed[0].start.date(), format);
+	return normalize(parsed[0].start.date());
 }
 
-export function normalizeDateFromTimestamp(ts: number, format: string): string {
-	return normalize(new Date(ts), format);
+export function normalizeDateFromTimestamp(ts: number): string {
+	return normalize(new Date(ts));
 }
 
 export function computeBlocks(lines: string[]) {

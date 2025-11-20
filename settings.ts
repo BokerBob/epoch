@@ -3,15 +3,13 @@ import EpochPlugin from "./main";
 
 export interface EpochSettings {
 	trackChanges: boolean;
-	parseDates: boolean;
-	dateFormat: string;
+	parseContentDates: boolean;
 	summaryWordsCount: number;
 }
 
 export const DEFAULT_SETTINGS: EpochSettings = {
 	trackChanges: true,
-	parseDates: true,
-	dateFormat: "dd-MM-yyyy",
+	parseContentDates: true,
 	summaryWordsCount: 7
 };
 
@@ -49,25 +47,12 @@ export class EpochSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Parse dates in content")
+			.setName("Parse dates")
 			.addToggle(toggle =>
 				toggle
-					.setValue(this.plugin.settings.parseDates)
+					.setValue(this.plugin.settings.parseContentDates)
 					.onChange(async value => {
-						this.plugin.settings.parseDates = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Date format")
-			.setDesc("Example: dd-MM-yyyy")
-			.addText(text =>
-				text
-					.setPlaceholder("dd-MM-yyyy")
-					.setValue(this.plugin.settings.dateFormat)
-					.onChange(async value => {
-						this.plugin.settings.dateFormat = value.trim();
+						this.plugin.settings.parseContentDates = value;
 						await this.plugin.saveSettings();
 					})
 			);
@@ -75,7 +60,7 @@ export class EpochSettingTab extends PluginSettingTab {
         const summaryWordsCountCountSetting = new Setting(containerEl);
 
 		summaryWordsCountCountSetting
-            .setName(`Summary words count (${this.plugin.settings.summaryWordsCount})`)
+            .setName(`Summary words (${this.plugin.settings.summaryWordsCount})`)
             .addSlider(slider => {
                 slider
                     .setLimits(3, 10, 1)

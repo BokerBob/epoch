@@ -1,0 +1,27 @@
+:root {
+  --epoch-line-color: #bbb;
+  --epoch-text-color: #666;
+  --epoch-text-color-hover: #222;
+  --epoch-today-color: #e35336;
+  --epoch-font-main: 14px system-ui, sans-serif;
+  --epoch-font-small: 10px system-ui, sans-serif;
+  --epoch-bg: white;
+}
+
+.epoch-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--epoch-bg);
+}
+
+.epoch-root {
+  flex: 1;
+  position: relative;
+}
+
+.epoch-root canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
