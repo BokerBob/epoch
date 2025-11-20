@@ -1,12 +1,11 @@
 // indexer.ts
 import { TFile } from "obsidian";
 import { DateEntry, EpochIndex } from "./types";
-import { computeBlocks } from "./block-splitter";
 import {
-	findDateInText,
-	findDateInFilename,
-	normalizeDateFromTimestamp
-} from "./date-scanner";
+	parseAnyDate,
+	normalizeDateFromTimestamp,
+	computeBlocks
+} from "./extractor";
 import { makeSummary } from "./summarizer";
 
 export class Indexer {
@@ -31,9 +30,11 @@ export class Indexer {
 		const content = await this.plugin.app.vault.read(file);
 		const lines = content.split("\n");
 		const isMd = file.extension === "md";
+		if(!isMd)
+			return;
 
-		const mdate = normalizeDateFromTimestamp(file.stat.mtime);
-		const filenameDate = findDateInFilename(file.name);
+		const mdate = normalizeDateFromTimestamp(file.stat.mtime, this.plugin.settings.dateFormat);
+		const filenameDate = parseAnyDate(file.name, this.plugin.settings.dateFormat);
 
 		// blocks only for MD
 		let hasBlockDates = false;
@@ -44,7 +45,7 @@ export class Indexer {
 
 			for (const b of blocks) {
 				const text = lines.slice(b.start, b.end + 1).join("\n");
-				const date = findDateInText(text);
+				const date = parseAnyDate(text, this.plugin.settings.dateFormat);
 				if (!date) continue;
 
 				hasBlockDates = true;
@@ -71,7 +72,7 @@ export class Indexer {
 				date: filenameDate,
 				file: file.path,
 				blockStart: 0,
-				blockEnd: isMd ? lines.length - 1 : 0,
+				blockEnd: 0,
 				summary: isMd ? makeSummary(content, this.plugin.settings.summaryWordsCount) : ""
 			};
 			addToIndex(this.index, filenameDate, entry);
@@ -83,7 +84,7 @@ export class Indexer {
 			date: mdate,
 			file: file.path,
 			blockStart: 0,
-			blockEnd: isMd ? lines.length - 1 : 0,
+			blockEnd: 0,
 			summary: isMd ? makeSummary(content, this.plugin.settings.summaryWordsCount) : ""
 		};
 		addToIndex(this.index, mdate, entry);

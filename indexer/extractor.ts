@@ -1,88 +1,102 @@
-import { TFile, CachedMetadata } from "obsidian";
-import { DDMap } from "./types";
+import * as chrono from "chrono-node";
+import { flattenForDates } from "./flattener";
 
-const DATE_RE = /(\d{1,2}[-\/.]\d{1,2}[-\/.]\d{4})|(\d{4}[-\/.]\d{2}[-\/.]\d{2})/;
+function buildStrictChrono() {
+	const strict = new chrono.Chrono(chrono.en.GB);
 
-export class Extractor {
-	constructor(private app: any) {}
+	const bannedParserClasses = new Set([
+		// casual
+		"ENCasualDateParser",
+		"ENCasualTimeParser",
+		"ENCasualYearMonthParser",
 
-	extractFrontmatter(cache: CachedMetadata, dd: DDMap) {
-		if (!cache.frontmatter) return;
+		// relative
+		"ENRelativeDateFormatParser",
+		"ENPrioritizeForwardRefiner",
+		"ENMergeRelativeResultRefiner",
+		"ENTimeUnitAgoFormatParser",
+		"ENTimeUnitWithinFormatParser",
 
-		for (const key of Object.keys(cache.frontmatter)) {
-			if (!key.startsWith("e-")) continue;
+		// time expressions
+		"ENTimeExpressionParser",
+		"ENISOTimeExpressionParser",
+		"ENTimeParser",
 
-			const date = key.substring(3);
-			const arr = cache.frontmatter[key] as string[];
-			if (!Array.isArray(arr)) continue;
+		// weekdays
+		"ENWeekdayParser",
+	]);
 
-			for (const link of arr) {
-				const id = this.extractBlockId(link);
-				if (!id) continue;
+	const bannedRefiners = new Set([
+		"ENMergeRelativeResultRefiner",
+		"ENPrioritizeForwardRefiner",
+		"ENCasualDateRefiner"
+	]);
 
-				if (!dd[date]) dd[date] = [];
-				dd[date].push(id);
-			}
+	strict.parsers = strict.parsers.filter(p => {
+		const name = p.constructor?.name || "";
+		return !bannedParserClasses.has(name);
+	});
+
+	strict.refiners = strict.refiners.filter(r => {
+		const name = r.constructor?.name || "";
+		return !bannedRefiners.has(name);
+	});
+
+	return strict;
+}
+
+const strictChrono = buildStrictChrono();
+
+export function normalize(d: Date, format: string): string {
+	const dd = String(d.getDate()).padStart(2, "0");
+	const mm = String(d.getMonth() + 1).padStart(2, "0");
+	const yyyy = d.getFullYear().toString();
+
+	return format
+		.replace(/dd/g, dd)
+		.replace(/MM/g, mm)
+		.replace(/yyyy/g, yyyy);
+}
+
+const ORD = "(st|nd|rd|th)";
+const MONTH = "(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)";
+
+function isLikelyDate(t: string): boolean {
+	const s = t.toLowerCase();
+
+	if (new RegExp(`\\b\\d{1,2}${ORD}\\s+${MONTH}\\s+\\d{4}\\b`).test(s)) return true;
+	if (new RegExp(`\\b${MONTH}\\s+\\d{1,2}${ORD},?\\s+\\d{4}\\b`).test(s)) return true;
+
+	if (/(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})/.test(s)) return true;
+
+	return false;
+}
+
+export function parseAnyDate(text: string, format: string): string | null {
+	const flat = flattenForDates(text);
+	if (!isLikelyDate(flat)) return null;
+
+	const parsed = strictChrono.parse(flat);
+	if (parsed.length === 0) return null;
+
+	return normalize(parsed[0].start.date(), format);
+}
+
+export function normalizeDateFromTimestamp(ts: number, format: string): string {
+	return normalize(new Date(ts), format);
+}
+
+export function computeBlocks(lines: string[]) {
+	const blocks = [];
+	let start = 0;
+
+	for (let i = 0; i < lines.length; i++) {
+		if (lines[i].trim() === "") {
+			if (i > start) blocks.push({ start, end: i - 1 });
+			start = i + 1;
 		}
 	}
 
-	extractDatesFromContent(lines: string[], cache: CachedMetadata, dd: DDMap) {
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i];
-			const m = line.match(DATE_RE);
-			if (!m) continue;
-
-			const date = this.normalizeDate(m[0]);
-			const blockId = this.findBlockIdByLine(cache, i);
-
-			if (!blockId) continue;
-
-			if (!dd[date]) dd[date] = [];
-			dd[date].push(blockId);
-		}
-	}
-
-	normalizeDate(d: string): string {
-		// convert dd-mm-yyyy or yyyy-mm-dd → dd-MM-yyyy
-		const parts = d.includes("-") ? d.split("-") :
-					  d.includes("/") ? d.split("/") :
-					  d.split(".");
-
-		if (parts[2].length === 4) {
-			// dd mm yyyy
-			return `${parts[0].padStart(2,"0")}-${parts[1].padStart(2,"0")}-${parts[2]}`;
-		}
-
-		// yyyy mm dd
-		return `${parts[2].padStart(2,"0")}-${parts[1].padStart(2,"0")}-${parts[0]}`;
-	}
-
-	findBlockId(lines: string[], index: number): string | null {
-		for (let i = index; i >= 0; i--) {
-			const line = lines[i];
-			const m = line.match(/\^([a-zA-Z0-9]{4,})/);
-			if (m) return m[1];
-		}
-		return null;
-	}
-
-	findBlockIdByLine(cache: CachedMetadata, line: number): string | null {
-		if (!cache.blocks) return null;
-
-		for (const [id, block] of Object.entries(cache.blocks)) {
-			const start = block.position.start.line;
-			const end = block.position.end.line;
-
-			if (line >= start && line <= end) {
-				return id;
-			}
-		}
-
-		return null;
-	}
-
-	extractBlockId(link: string): string | null {
-		const m = link.match(/\^\w{4,}/);
-		return m ? m[0].substring(1) : null;
-	}
+	if (start < lines.length) blocks.push({ start, end: lines.length - 1 });
+	return blocks;
 }
