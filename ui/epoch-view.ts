@@ -1,4 +1,3 @@
-// ui/epoch-view.ts
 import { ItemView, WorkspaceLeaf } from "obsidian";
 import { VIEW_TYPE_EPOCH } from "./epoch-view-mode";
 import { EpochCanvas } from "./epoch-canvas";
@@ -40,6 +39,11 @@ export class EpochView extends ItemView {
 	focusToday() {
 		if (!this.canvas) return;
 		this.canvas.focusToday();
+	}
+
+	refreshIndex() {
+		if (!this.canvas) return;
+		this.canvas.refreshIndex();
 	}
 
 	async onClose() {

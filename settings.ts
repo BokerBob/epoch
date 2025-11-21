@@ -1,10 +1,18 @@
-import { App, PluginSettingTab, Setting, TFolder } from "obsidian";
-import EpochPlugin from "./main";
+// settings.ts
+import {
+	App,
+	PluginSettingTab,
+	Setting,
+	TFolder,
+	Notice
+} from "obsidian";
+import type EpochPlugin from "./main";
 
 export interface EpochSettings {
 	trackChanges: boolean;
 	parseContentDates: boolean;
 	showAttachments: boolean;
+	generateSummaries: boolean;
 	summaryWordsCount: number;
 	newNotePath: string;
 }
@@ -13,8 +21,9 @@ export const DEFAULT_SETTINGS: EpochSettings = {
 	trackChanges: true,
 	parseContentDates: true,
 	showAttachments: false,
+	generateSummaries: true,
 	summaryWordsCount: 7,
-	newNotePath: ""
+	newNotePath: "/"
 };
 
 export class EpochSettingTab extends PluginSettingTab {
@@ -29,84 +38,80 @@ export class EpochSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
+		// trackChanges
 		new Setting(containerEl)
-			.setName("Track changes")
+			.setName("Track changes in blocks")
 			.addToggle(toggle =>
 				toggle
 					.setValue(this.plugin.settings.trackChanges)
-					.onChange(async value => {
+					.onChange(async (value) => {
 						this.plugin.settings.trackChanges = value;
-						await this.plugin.saveSettings();
+						await this.plugin.onSettingsChanged("trackChanges");
 					})
 			);
 
+		// parseContentDates
 		new Setting(containerEl)
-			.setName("Parse dates")
+			.setName("Parse dates from content and file names")
 			.addToggle(toggle =>
 				toggle
 					.setValue(this.plugin.settings.parseContentDates)
-					.onChange(async value => {
+					.onChange(async (value) => {
 						this.plugin.settings.parseContentDates = value;
-						await this.plugin.saveSettings();
+						await this.plugin.onSettingsChanged("parseContentDates");
 					})
 			);
 
+		// showAttachments
 		new Setting(containerEl)
 			.setName("Show attachments")
 			.addToggle(toggle =>
 				toggle
 					.setValue(this.plugin.settings.showAttachments)
-					.onChange(async value => {
+					.onChange(async (value) => {
 						this.plugin.settings.showAttachments = value;
-						await this.plugin.saveSettings();
+						await this.plugin.onSettingsChanged("showAttachments");
 					})
 			);
-        
-        const summaryWordsCountCountSetting = new Setting(containerEl);
 
-		summaryWordsCountCountSetting
-            .setName(`Summary words (${this.plugin.settings.summaryWordsCount})`)
-            .addSlider(slider => {
-                slider
-                    .setLimits(3, 10, 1)
-                    .setValue(this.plugin.settings.summaryWordsCount)
-                    .setDynamicTooltip()
-                    .onChange(async value => {
-                        this.plugin.settings.summaryWordsCount = value;
-                        summaryWordsCountCountSetting.setName(`Summary words count (${value})`);
-                        await this.plugin.saveSettings();
-                    });
-            });
-
+		// generateSummaries
 		new Setting(containerEl)
-			.setName("New note location")
-			.addDropdown(drop => {
-				const folders: TFolder[] = [];
-				for (const f of this.app.vault.getAllLoadedFiles()) {
-					if (f instanceof TFolder) folders.push(f);
-				}
-				folders.sort((a, b) => a.path.localeCompare(b.path));
+			.setName("Generate summaries")
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.generateSummaries)
+					.onChange(async (value) => {
+						this.plugin.settings.generateSummaries = value;
+						await this.plugin.onSettingsChanged("generateSummaries");
+					})
+			);
 
-				drop.addOption("", "(vault root)");
-				for (const f of folders) {
-					drop.addOption(f.path, f.path);
-				}
-
-				drop.setValue(this.plugin.settings.newNotePath || "");
-
-				drop.onChange(async value => {
-					this.plugin.settings.newNotePath = value;
-					await this.plugin.saveSettings();
-				});
-			});
-
+		// summaryWordsCount
 		new Setting(containerEl)
-			.addButton(btn => {
-				btn.setButtonText("Rebuild index")
-					.setCta()
-					.onClick(() => {
-						this.plugin.rebuildIndex();
-					});
-			});
+			.setName("Summary length (words)")
+			.addText(text =>
+				text
+					.setPlaceholder("12")
+					.setValue(String(this.plugin.settings.summaryWordsCount))
+					.onChange(async (value) => {
+						const n = Number(value);
+						if (!Number.isFinite(n) || n <= 0) return;
+						this.plugin.settings.summaryWordsCount = n;
+						await this.plugin.onSettingsChanged("summaryWordsCount");
+					})
+			);
+
+		// ----- Rebuild index button -----
+			new Setting(containerEl)
+				.setName("Rebuild index")
+				.setDesc("Full rescan of the vault and Epoch index.")
+				.addButton(btn =>
+					btn
+						.setButtonText("Rebuild")
+						.onClick(async () => {
+							new Notice("Epoch: rebuilding index…");
+							await this.plugin.rebuildIndexWithProgress();
+						})
+				);
 	}
 }

@@ -1,4 +1,4 @@
-import { MarkdownView, TFile, Menu } from "obsidian";
+import { MarkdownView, TFile, Menu, Platform } from "obsidian";
 import type { EpochIndex, DateEntry } from "../indexer/types";
 import { formatDate } from "utils";
 
@@ -135,13 +135,18 @@ export class EpochCanvas {
 		this.canvas = root.createEl("canvas");
 		this.ctx = this.canvas.getContext("2d")!;
 
-		this.loadIndex();
+		this.refreshIndex();
 		this.bind();
 
 		this.resizeObserver = new ResizeObserver(() => {
 			window.requestAnimationFrame(() => this.resize());
 		});
 		this.resizeObserver.observe(this.root);
+	}
+
+	public refreshIndex() {
+		this.index = this.plugin.indexer.index as EpochIndex;
+		this.draw();
 	}
 
 	public initSize() {
@@ -158,10 +163,6 @@ export class EpochCanvas {
 		this.animDateIndex = null;
 		this.animSummary = null;
 		this.draw();
-	}
-
-	private loadIndex() {
-		this.index = this.plugin.indexer.index as EpochIndex;
 	}
 
 	private bind() {
@@ -654,6 +655,13 @@ export class EpochCanvas {
 		// @ts-ignore
 		await leaf.openFile(file);
 
+		if (Platform.isMobileApp) {
+			const ws: any = app.workspace;
+			if (ws.rightSplit && typeof ws.rightSplit.collapse === "function") {
+				ws.rightSplit.collapse();
+			}
+		}
+
 		const view = leaf.view as MarkdownView | null;
 		if (!view) return;
 
@@ -665,6 +673,7 @@ export class EpochCanvas {
 			true
 		);
 	}
+
 
 	private async openEntry(entry: DateEntry, ev?: MouseEvent) {
 		const line = Math.max(0, entry.blockStart ?? 0);

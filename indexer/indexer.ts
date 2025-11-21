@@ -6,11 +6,16 @@ import {
 	computeBlocks
 } from "./extractor";
 import { makeSummary } from "./summarizer";
+import { sortIndex } from "./indexer-utils";
 
 export class Indexer {
 	index: EpochIndex = {};
 
 	constructor(private plugin: any) {}
+
+	private shouldGenerateSummary(isMd: boolean): boolean {
+		return isMd && this.plugin.settings.generateSummaries === true;
+	}
 
 	async rebuild() {
 		const files = this.plugin.app.vault.getFiles();
@@ -33,16 +38,20 @@ export class Indexer {
 			return;
 		}
 
-		const content = await this.plugin.app.vault.read(file);
-		const lines = content.split("\n");
+		const content = isMd
+			? await this.plugin.app.vault.read(file)
+			: "";
+		const lines = isMd ? content.split("\n") : [];
 
 		const mdate = normalizeDateFromTimestamp(file.stat.mtime);
-		const filenameDate = parseAnyDate(file.name);
 
+		const parseDates = this.plugin.settings.parseDates === true;
+
+		// CASE 1: MD + parseDates → пробуємо витягнути дати з контенту
 		let hasBlockDates = false;
 		let blockEntries: DateEntry[] = [];
 
-		if (isMd && this.plugin.settings.parseContentDates === true) {
+		if (isMd && parseDates) {
 			const blocks = computeBlocks(lines);
 
 			for (const b of blocks) {
@@ -52,12 +61,16 @@ export class Indexer {
 
 				hasBlockDates = true;
 
+				const summary = this.shouldGenerateSummary(true)
+					? makeSummary(text, this.plugin.settings.summaryWordsCount)
+					: "";
+
 				blockEntries.push({
 					date,
 					file: file.path,
 					blockStart: b.start,
 					blockEnd: b.end,
-					summary: makeSummary(text, this.plugin.settings.summaryWordsCount)
+					summary
 				});
 			}
 		}
@@ -67,28 +80,39 @@ export class Indexer {
 			return;
 		}
 
+		// CASE 2: parseDates → пробуємо дату з імені файла
+		let filenameDate: string | null = null;
+		if (parseDates) {
+			filenameDate = parseAnyDate(file.name);
+		}
+
 		if (filenameDate) {
+			const summary = this.shouldGenerateSummary(isMd)
+				? makeSummary(content, this.plugin.settings.summaryWordsCount)
+				: "";
+
 			const entry: DateEntry = {
 				date: filenameDate,
 				file: file.path,
 				blockStart: 0,
 				blockEnd: 0,
-				summary: isMd
-					? makeSummary(content, this.plugin.settings.summaryWordsCount)
-					: ""
+				summary
 			};
 			addToIndex(this.index, filenameDate, entry);
 			return;
 		}
+
+		// CASE 3: fallback → mdate
+		const summary = this.shouldGenerateSummary(isMd)
+			? makeSummary(content, this.plugin.settings.summaryWordsCount)
+			: "";
 
 		const entry: DateEntry = {
 			date: mdate,
 			file: file.path,
 			blockStart: 0,
 			blockEnd: 0,
-			summary: isMd
-				? makeSummary(content, this.plugin.settings.summaryWordsCount)
-				: ""
+			summary
 		};
 		addToIndex(this.index, mdate, entry);
 	}
@@ -99,25 +123,22 @@ export class Indexer {
 function addToIndex(index: EpochIndex, date: string, entry: DateEntry) {
 	if (!index[date]) index[date] = [];
 
-	// prevent duplicates
-	if (!index[date].some(e => e.file === entry.file && e.blockStart === entry.blockStart)) {
-		index[date].push(entry);
+	const arr = index[date];
+
+	if (arr.length > 0) {
+		const last = arr[arr.length - 1];
+		const lastStart = last.blockStart ?? 0;
+		const lastEnd = last.blockEnd ?? lastStart;
+		const newStart = entry.blockStart ?? 0;
+
+		if (last.file === entry.file && newStart === lastEnd + 1) {
+			const newEnd = entry.blockEnd ?? entry.blockStart ?? newStart;
+			last.blockEnd = Math.max(lastEnd, newEnd);
+			return;
+		}
 	}
-}
 
-function dateKey(d: string) {
-	const [dd, mm, yyyy] = d.split("-");
-	return Number(`${yyyy}${mm}${dd}`);
-}
-
-function sortIndex(index: EpochIndex): EpochIndex {
-	const out: EpochIndex = {};
-	const dates = Object.keys(index).sort((a, b) => dateKey(a) - dateKey(b));
-
-	for (const d of dates) {
-		out[d] = index[d].sort(
-			(a, b) => a.file.localeCompare(b.file) || a.blockStart - b.blockStart
-		);
+	if (!arr.some(e => e.file === entry.file && e.blockStart === entry.blockStart)) {
+		arr.push(entry);
 	}
-	return out;
 }
