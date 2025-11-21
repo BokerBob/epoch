@@ -26,14 +26,19 @@ export class Indexer {
 	}
 
 	async processFile(file: TFile) {
+		const isMd = file.extension === "md";
+		const isAttachment = !isMd;
+
+		if (isAttachment && this.plugin.settings.showAttachments === false) {
+			return;
+		}
+
 		const content = await this.plugin.app.vault.read(file);
 		const lines = content.split("\n");
-		const isMd = file.extension === "md";
 
 		const mdate = normalizeDateFromTimestamp(file.stat.mtime);
 		const filenameDate = parseAnyDate(file.name);
 
-		// blocks only for MD
 		let hasBlockDates = false;
 		let blockEntries: DateEntry[] = [];
 
@@ -57,32 +62,33 @@ export class Indexer {
 			}
 		}
 
-		// CASE 1: MD with block dates → only blocks
 		if (hasBlockDates) {
 			for (const e of blockEntries) addToIndex(this.index, e.date, e);
 			return;
 		}
 
-		// CASE 2: MD/Non-MD with filename date
 		if (filenameDate) {
 			const entry: DateEntry = {
 				date: filenameDate,
 				file: file.path,
 				blockStart: 0,
 				blockEnd: 0,
-				summary: isMd ? makeSummary(content, this.plugin.settings.summaryWordsCount) : ""
+				summary: isMd
+					? makeSummary(content, this.plugin.settings.summaryWordsCount)
+					: ""
 			};
 			addToIndex(this.index, filenameDate, entry);
 			return;
 		}
 
-		// CASE 3: fallback → mdate
 		const entry: DateEntry = {
 			date: mdate,
 			file: file.path,
 			blockStart: 0,
 			blockEnd: 0,
-			summary: isMd ? makeSummary(content, this.plugin.settings.summaryWordsCount) : ""
+			summary: isMd
+				? makeSummary(content, this.plugin.settings.summaryWordsCount)
+				: ""
 		};
 		addToIndex(this.index, mdate, entry);
 	}

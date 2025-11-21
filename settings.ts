@@ -1,16 +1,20 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab, Setting, TFolder } from "obsidian";
 import EpochPlugin from "./main";
 
 export interface EpochSettings {
 	trackChanges: boolean;
 	parseContentDates: boolean;
+	showAttachments: boolean;
 	summaryWordsCount: number;
+	newNotePath: string;
 }
 
 export const DEFAULT_SETTINGS: EpochSettings = {
 	trackChanges: true,
 	parseContentDates: true,
-	summaryWordsCount: 7
+	showAttachments: false,
+	summaryWordsCount: 7,
+	newNotePath: ""
 };
 
 export class EpochSettingTab extends PluginSettingTab {
@@ -46,6 +50,17 @@ export class EpochSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		new Setting(containerEl)
+			.setName("Show attachments")
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.showAttachments)
+					.onChange(async value => {
+						this.plugin.settings.showAttachments = value;
+						await this.plugin.saveSettings();
+					})
+			);
         
         const summaryWordsCountCountSetting = new Setting(containerEl);
 
@@ -62,6 +77,28 @@ export class EpochSettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     });
             });
+
+		new Setting(containerEl)
+			.setName("New note location")
+			.addDropdown(drop => {
+				const folders: TFolder[] = [];
+				for (const f of this.app.vault.getAllLoadedFiles()) {
+					if (f instanceof TFolder) folders.push(f);
+				}
+				folders.sort((a, b) => a.path.localeCompare(b.path));
+
+				drop.addOption("", "(vault root)");
+				for (const f of folders) {
+					drop.addOption(f.path, f.path);
+				}
+
+				drop.setValue(this.plugin.settings.newNotePath || "");
+
+				drop.onChange(async value => {
+					this.plugin.settings.newNotePath = value;
+					await this.plugin.saveSettings();
+				});
+			});
 
 		new Setting(containerEl)
 			.addButton(btn => {
