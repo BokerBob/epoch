@@ -40,5 +40,6 @@ export class EpochView extends ItemView {
 
 	async onClose() {
 		this.container?.empty();
+		this.canvas?.destroy();
 	}
 }

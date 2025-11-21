@@ -26,16 +26,6 @@ export class EpochSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName("Rebuild index")
-			.addButton(btn => {
-				btn.setButtonText("Rebuild")
-					.setCta()
-					.onClick(() => {
-						this.plugin.rebuildIndex();
-					});
-			});
-
-		new Setting(containerEl)
 			.setName("Track changes")
 			.addToggle(toggle =>
 				toggle
@@ -72,5 +62,14 @@ export class EpochSettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     });
             });
+
+		new Setting(containerEl)
+			.addButton(btn => {
+				btn.setButtonText("Rebuild index")
+					.setCta()
+					.onClick(() => {
+						this.plugin.rebuildIndex();
+					});
+			});
 	}
 }

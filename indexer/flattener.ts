@@ -179,5 +179,10 @@ export function flattenForSummary(raw: string): string {
 		text = text.replace(ph, urls[i]);
 	}
 
+	text = text.replace(
+		/[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F\u200D]/gu,
+		" "
+	);
+
 	return text.replace(/\s+/g, " ").trim();
 }

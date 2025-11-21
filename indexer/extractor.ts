@@ -1,5 +1,6 @@
 import * as chrono from "chrono-node";
 import { flattenForDates } from "./flattener";
+import { formatDate } from "utils";
 
 function buildStrictChrono() {
 	const strict = new chrono.Chrono(chrono.en.GB);
@@ -47,21 +48,8 @@ function buildStrictChrono() {
 
 const strictChrono = buildStrictChrono();
 
-export function normalize(d: Date): string {
-	const dd = String(d.getDate()).padStart(2, "0");
-	const mm = String(d.getMonth() + 1).padStart(2, "0");
-	const yyyy = d.getFullYear().toString();
-
-	return DATE_FORMAT
-		.replace(/dd/g, dd)
-		.replace(/MM/g, mm)
-		.replace(/yyyy/g, yyyy);
-}
-
 const ORD = "(st|nd|rd|th)";
 const MONTH = "(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)";
-
-const DATE_FORMAT = "yyyy-MM-dd";
 
 function isLikelyDate(t: string): boolean {
 	const s = t.toLowerCase();
@@ -81,11 +69,11 @@ export function parseAnyDate(text: string): string | null {
 	const parsed = strictChrono.parse(flat);
 	if (parsed.length === 0) return null;
 
-	return normalize(parsed[0].start.date());
+	return formatDate(parsed[0].start.date());
 }
 
 export function normalizeDateFromTimestamp(ts: number): string {
-	return normalize(new Date(ts));
+	return formatDate(new Date(ts));
 }
 
 export function computeBlocks(lines: string[]) {
