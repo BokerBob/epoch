@@ -28,6 +28,10 @@ export default class EpochPlugin extends Plugin {
 			callback: () => this.rebuildIndex()
 		});
 
+		this.addRibbonIcon("hourglass", "Open epoch view", () => {
+			this.openEpochView();
+		});
+
 		this.registerView(
 			VIEW_TYPE_EPOCH,
 			(leaf) => new EpochView(leaf, this)

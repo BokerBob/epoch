@@ -19,7 +19,11 @@ export class EpochView extends ItemView {
 	}
 
 	getDisplayText() {
-		return "Epoch";
+		return "Epoch view";
+	}
+
+	getIcon(): string {
+		return "hourglass";
 	}
 
 	async onOpen() {
