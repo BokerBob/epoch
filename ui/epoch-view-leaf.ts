@@ -1,5 +1,5 @@
 import { WorkspaceLeaf } from "obsidian";
-import { EpochPlugin } from "../main";
+import EpochPlugin from "../main";
 import { VIEW_TYPE_EPOCH } from "./epoch-view-mode";
 import { EpochView } from "./epoch-view";
 

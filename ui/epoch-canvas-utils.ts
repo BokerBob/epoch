@@ -1,3 +1,5 @@
+import type { DateEntry } from "../indexer/types";
+
 export function truncate(
 	text: string,
 	maxWidth: number,
@@ -6,11 +8,48 @@ export function truncate(
 	if (!text) return "";
 	if (ctx.measureText(text).width <= maxWidth) return text;
 	const ell = "...";
+	const dot = text.lastIndexOf(".");
+	const suffix = dot > 0 ? text.slice(dot) : "";
+
+	const ensureSuffixFits = (value: string): string => {
+		if (!suffix) return value;
+		let suffixText = suffix;
+		if (ctx.measureText(value).width <= maxWidth) return value;
+		if (ctx.measureText(ell + suffix).width <= maxWidth) {
+			return ell + suffix;
+		}
+		while (suffixText.length > 1 && ctx.measureText(suffixText).width > maxWidth) {
+			suffixText = suffixText.slice(1);
+		}
+		return suffixText;
+	};
+
+	if (!suffix) {
+		let low = 0;
+		let high = text.length;
+		while (low < high) {
+			const mid = (low + high) >> 1;
+			const candidate = text.slice(0, mid) + ell;
+			if (ctx.measureText(candidate).width <= maxWidth) {
+				low = mid + 1;
+			} else {
+				high = mid;
+			}
+		}
+		const len = Math.max(0, low - 1);
+		return text.slice(0, len) + ell;
+	}
+
+	const base = text.slice(0, dot);
+	if (ctx.measureText(ell + suffix).width > maxWidth) {
+		return ensureSuffixFits(suffix);
+	}
+
 	let low = 0;
-	let high = text.length;
+	let high = base.length;
 	while (low < high) {
 		const mid = (low + high) >> 1;
-		const candidate = text.slice(0, mid) + ell;
+		const candidate = base.slice(0, mid) + ell + suffix;
 		if (ctx.measureText(candidate).width <= maxWidth) {
 			low = mid + 1;
 		} else {
@@ -18,7 +57,11 @@ export function truncate(
 		}
 	}
 	const len = Math.max(0, low - 1);
-	return text.slice(0, len) + ell;
+	const candidate = base.slice(0, len) + ell + suffix;
+	if (ctx.measureText(candidate).width <= maxWidth) {
+		return candidate;
+	}
+	return ensureSuffixFits(candidate);
 }
 
 export function dist(a: Touch, b: Touch): number {
@@ -45,4 +88,16 @@ export function mixFont(base: string, hover: string, t: number): string {
 	const h = parseFontSize(hover || base);
 	const size = b.size + (h.size - b.size) * t;
 	return `${size.toFixed(2)}px${b.rest}`;
+}
+
+export function shouldRenderEntry(entry: DateEntry): boolean {
+	if (!entry) return false;
+	return true;
+}
+
+export function entryFileName(entry: DateEntry): string {
+	if (!entry) return "";
+	const parts = entry.file?.split?.("/") ?? [];
+	if (parts.length === 0) return entry.file || "";
+	return parts[parts.length - 1] || entry.file;
 }

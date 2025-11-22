@@ -4,30 +4,32 @@ import {
 	Notice,
 	TFile,
 	TAbstractFile,
-	TFolder
+	TFolder,
+	EventRef
 } from "obsidian";
 
 import { EpochSettings, DEFAULT_SETTINGS, EpochSettingTab } from "./settings";
 import { Indexer } from "./indexer/indexer";
 import { EpochView } from "./ui/epoch-view";
 import { VIEW_TYPE_EPOCH } from "./ui/epoch-view-mode";
-import type { EpochIndex } from "./indexer/types";
-import {
-	removeFileFromIndex,
-	renameFileInIndex,
-	sortIndex
-} from "./indexer/indexer-utils";
+import type { SerializedEpochIndex } from "./indexer/types";
 
 export default class EpochPlugin extends Plugin {
 	settings: EpochSettings;
 	indexer: Indexer;
 	noteLeaf: WorkspaceLeaf | null = null;
+	private vaultEventRefs: EventRef[] = [];
+	private workspaceEventRefs: EventRef[] = [];
 
 	private lastRebuildNoticeAt = 0;
 
 	async onload() {
-		await this.loadSettings();
+		const saved = (await this.loadData()) as
+			| { settings?: Partial<EpochSettings>; index?: SerializedEpochIndex }
+			| null;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved?.settings ?? {});
 		this.indexer = new Indexer(this);
+		await this.indexer.load(saved?.index);
 
 		this.addSettingTab(new EpochSettingTab(this.app, this));
 
@@ -52,10 +54,10 @@ export default class EpochPlugin extends Plugin {
 			(leaf: WorkspaceLeaf) => new EpochView(leaf, this)
 		);
 
-		const data = await this.loadData();
-		this.indexer.index = (data?.index as EpochIndex) || {};
-
-		if (!data?.index) {
+		const hasIndex = Boolean(
+			saved?.index && (saved.index as SerializedEpochIndex).dates
+		);
+		if (!hasIndex) {
 			await this.rebuildIndexWithProgress();
 		}
 
@@ -83,6 +85,7 @@ export default class EpochPlugin extends Plugin {
 		}
 
 		const leaf = this.app.workspace.getRightLeaf(false);
+		if (!leaf) return;
 
 		await leaf.setViewState({
 			type: VIEW_TYPE_EPOCH,
@@ -93,84 +96,83 @@ export default class EpochPlugin extends Plugin {
 	}
 
 	private registerFileEvents() {
-		this.app.vault.offref && this.app.vault.offref(this);
+		for (const ref of this.vaultEventRefs) {
+			this.app.vault.offref(ref);
+		}
+		for (const ref of this.workspaceEventRefs) {
+			this.app.workspace.offref(ref);
+		}
+		this.vaultEventRefs = [];
+		this.workspaceEventRefs = [];
 
-		this.registerEvent(
-			this.app.vault.on("create", async (file: TAbstractFile) => {
+		const createRef = this.app.vault.on("create", async (file: TAbstractFile) => {
+			if (!(file instanceof TFile)) return;
+			await this.indexer.processFile(file, { reason: "create" });
+			await this.persist();
+			this.refreshEpochViews();
+		});
+		this.registerEvent(createRef);
+		this.vaultEventRefs.push(createRef);
+
+		const deleteRef = this.app.vault.on("delete", async (file: TAbstractFile) => {
+			if (!(file instanceof TFile)) return;
+			this.indexer.removeFile(file.path);
+			await this.persist();
+			this.refreshEpochViews();
+		});
+		this.registerEvent(deleteRef);
+		this.vaultEventRefs.push(deleteRef);
+
+		const renameRef = this.app.vault.on(
+			"rename",
+			async (file: TAbstractFile, oldPath: string) => {
 				if (!(file instanceof TFile)) return;
-				await this.indexer.processFile(file);
-				await this.saveData({ index: this.indexer.index });
+				await this.indexer.renameFile(oldPath, file.path);
+				await this.persist();
 				this.refreshEpochViews();
-			})
+			}
 		);
-
-		this.registerEvent(
-			this.app.vault.on("delete", async (file: TAbstractFile) => {
-				if (!(file instanceof TFile)) return;
-				removeFileFromIndex(this.indexer.index, file.path);
-				await this.saveData({ index: this.indexer.index });
-				this.refreshEpochViews();
-			})
-		);
-
-		this.registerEvent(
-			this.app.vault.on(
-				"rename",
-				async (file: TAbstractFile, oldPath: string) => {
-					if (!(file instanceof TFile)) return;
-					renameFileInIndex(this.indexer.index, oldPath, file.path);
-					await this.saveData({ index: this.indexer.index });
-					this.refreshEpochViews();
-				}
-			)
-		);
+		this.registerEvent(renameRef);
+		this.vaultEventRefs.push(renameRef);
 
 		if (this.settings.trackChanges) {
-			this.registerEvent(
-				// @ts-ignore
-				this.app.workspace.on("editor-change", async (editor, info) => {
+			const trackRef = this.app.workspace.on(
+				"editor-change",
+				async (_editor, _info) => {
 					const file = this.app.workspace.getActiveFile();
 					if (!file) return;
-					await this.indexer.processFile(file);
-					await this.saveData({ index: this.indexer.index });
+					await this.indexer.processFile(file, { reason: "track" });
+					await this.persist();
 					this.refreshEpochViews();
-				})
+				}
 			);
+			this.registerEvent(trackRef);
+			this.workspaceEventRefs.push(trackRef);
 		} else {
-			this.registerEvent(
-				this.app.vault.on("modify", async (file: TAbstractFile) => {
-					if (!(file instanceof TFile)) return;
-					await this.indexer.processFile(file);
-					await this.saveData({ index: this.indexer.index });
-					this.refreshEpochViews();
-				})
-			);
+			const modifyRef = this.app.vault.on("modify", async (file: TAbstractFile) => {
+				if (!(file instanceof TFile)) return;
+				await this.indexer.processFile(file, { reason: "modify" });
+				await this.persist();
+				this.refreshEpochViews();
+			});
+			this.registerEvent(modifyRef);
+			this.vaultEventRefs.push(modifyRef);
 		}
 	}
 
 	async rebuildIndexWithProgress() {
 		const files = this.app.vault.getFiles();
-		const total = files.length;
-		let processed = 0;
-
-		this.indexer.index = {};
 		this.lastRebuildNoticeAt = 0;
 
-		const start = Date.now();
-
-		for (const file of files) {
-			await this.indexer.processFile(file);
-			processed++;
-
+		await this.indexer.rebuildAll(files, (processed, total) => {
 			const now = Date.now();
 			if (now - this.lastRebuildNoticeAt > 1000) {
 				this.lastRebuildNoticeAt = now;
 				new Notice(`Epoch indexing… ${processed}/${total}`);
 			}
-		}
+		});
 
-		this.indexer.index = sortIndex(this.indexer.index);
-		await this.saveData({ index: this.indexer.index });
+		await this.persist();
 		new Notice("Epoch index rebuilt");
 
 		this.refreshEpochViews();
@@ -190,8 +192,8 @@ export default class EpochPlugin extends Plugin {
 		if (
 			key === "parseContentDates" ||
 			key === "showAttachments" ||
-			key === "generateSummaries" ||
-			key === "summaryWordsCount"
+			key === "summaryWordsCount" ||
+			key === "trackChanges"
 		) {
 			await this.rebuildIndexWithProgress();
 		}
@@ -201,12 +203,14 @@ export default class EpochPlugin extends Plugin {
 		}
 	}
 
-
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+	private async persist() {
+		await this.saveData({
+			settings: this.settings,
+			index: this.indexer.toJSON()
+		});
 	}
 
 	async saveSettings() {
-		await this.saveData(this.settings);
+		await this.persist();
 	}
 }

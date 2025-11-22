@@ -12,7 +12,6 @@ export interface EpochSettings {
 	trackChanges: boolean;
 	parseContentDates: boolean;
 	showAttachments: boolean;
-	generateSummaries: boolean;
 	summaryWordsCount: number;
 	newNotePath: string;
 }
@@ -21,7 +20,6 @@ export const DEFAULT_SETTINGS: EpochSettings = {
 	trackChanges: true,
 	parseContentDates: true,
 	showAttachments: false,
-	generateSummaries: true,
 	summaryWordsCount: 7,
 	newNotePath: "/"
 };
@@ -38,9 +36,9 @@ export class EpochSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		// trackChanges
 		new Setting(containerEl)
-			.setName("Track changes in blocks")
+			.setName("Track changes")
+			.setDesc("Enable tracking of changes within individual blocks.")
 			.addToggle(toggle =>
 				toggle
 					.setValue(this.plugin.settings.trackChanges)
@@ -50,9 +48,9 @@ export class EpochSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// parseContentDates
 		new Setting(containerEl)
-			.setName("Parse dates from content and file names")
+			.setName("Parse dates")
+			.setDesc("Try to extract dates from the content of notes.")
 			.addToggle(toggle =>
 				toggle
 					.setValue(this.plugin.settings.parseContentDates)
@@ -62,9 +60,9 @@ export class EpochSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// showAttachments
 		new Setting(containerEl)
 			.setName("Show attachments")
+			.setDesc("Show images and other attachments in the timeline.")
 			.addToggle(toggle =>
 				toggle
 					.setValue(this.plugin.settings.showAttachments)
@@ -74,44 +72,66 @@ export class EpochSettingTab extends PluginSettingTab {
 					})
 			);
 
-		// generateSummaries
-		new Setting(containerEl)
-			.setName("Generate summaries")
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.generateSummaries)
+		const summarySetting = new Setting(containerEl);
+		const setSummaryLabel = (val: number) => {
+			if (val <= 0) {
+				summarySetting.setName("Summary length (disabled)");
+			} else {
+				summarySetting.setName(`Summary length (${val} words)`);
+			}
+		};
+		const currentSummaryWords = this.plugin.settings.summaryWordsCount;
+		setSummaryLabel(currentSummaryWords);
+		summarySetting.setDesc("Number of words to include in generated summaries. Set to 0 to disable.");
+		summarySetting
+			.addSlider(slider => {
+				slider
+					.setLimits(0, 12, 1)
+					.setValue(currentSummaryWords)
+					.setDynamicTooltip()
 					.onChange(async (value) => {
-						this.plugin.settings.generateSummaries = value;
-						await this.plugin.onSettingsChanged("generateSummaries");
-					})
-			);
-
-		// summaryWordsCount
-		new Setting(containerEl)
-			.setName("Summary length (words)")
-			.addText(text =>
-				text
-					.setPlaceholder("12")
-					.setValue(String(this.plugin.settings.summaryWordsCount))
-					.onChange(async (value) => {
-						const n = Number(value);
-						if (!Number.isFinite(n) || n <= 0) return;
-						this.plugin.settings.summaryWordsCount = n;
+						const rounded = Math.round(value);
+						if (rounded !== value) slider.setValue(rounded);
+						this.plugin.settings.summaryWordsCount = rounded;
+						setSummaryLabel(rounded);
 						await this.plugin.onSettingsChanged("summaryWordsCount");
+				});
+			});
+
+		new Setting(containerEl)
+			.setName("New note location")
+			.setDesc("Default folder for new notes created via Epoch.")
+			.addDropdown(drop => {
+				const folders: TFolder[] = [];
+				for (const f of this.app.vault.getAllLoadedFiles()) {
+					if (f instanceof TFolder) folders.push(f);
+				}
+				folders.sort((a, b) => a.path.localeCompare(b.path));
+
+				drop.addOption("", "(vault root)");
+				for (const f of folders) {
+					drop.addOption(f.path, f.path);
+				}
+
+				drop.setValue(this.plugin.settings.newNotePath || "");
+
+				drop.onChange(async value => {
+					this.plugin.settings.newNotePath = value;
+					await this.plugin.saveSettings();
+				});
+			});
+
+		new Setting(containerEl)
+			.setName("Rebuild index")
+			.setDesc("Full rescan of the vault and Epoch index.")
+			.addButton(btn =>
+				btn
+					.setButtonText("Rebuild")
+					.setClass("mod-cta")
+					.onClick(async () => {
+						new Notice("Epoch: rebuilding index…");
+						await this.plugin.rebuildIndexWithProgress();
 					})
 			);
-
-		// ----- Rebuild index button -----
-			new Setting(containerEl)
-				.setName("Rebuild index")
-				.setDesc("Full rescan of the vault and Epoch index.")
-				.addButton(btn =>
-					btn
-						.setButtonText("Rebuild")
-						.onClick(async () => {
-							new Notice("Epoch: rebuilding index…");
-							await this.plugin.rebuildIndexWithProgress();
-						})
-				);
 	}
 }

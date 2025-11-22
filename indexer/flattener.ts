@@ -68,6 +68,12 @@ export function flattenForSummary(raw: string): string {
 	if (!raw) return "";
 
 	const LINK_MAX = 20;
+	const dateTokens: string[] = [];
+	const protectDate = (match: string) => {
+		const id = dateTokens.length;
+		dateTokens.push(match);
+		return `DATETOKEN${id}`;
+	};
 
 	const cleanUrl = (url: string): string => {
 		let u = url.trim()
@@ -130,6 +136,10 @@ export function flattenForSummary(raw: string): string {
 		return `FILETOKEN${id}`;
 	});
 
+	// Protect common numeric date formats
+	text = text.replace(/\b\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2}\b/g, protectDate);
+	text = text.replace(/\b\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4}\b/g, protectDate);
+
 	// Structural markdown / junk
 	text = text
 		.replace(/%%[\s\S]*?%%/g, " ")
@@ -160,8 +170,10 @@ export function flattenForSummary(raw: string): string {
 
 	// Generic punctuation
 	text = text.replace(/(\d):(\d{2})/g, "$1TIMEP_$2");
-	text = text.replace(/[.,!?;]+/g, " "); // remove everything except :
-	text = text.replace(/:/g, " ");        // remove : everywhere
+	text = text.replace(/[!?;]+/g, " ");
+	text = text.replace(/,(?!\d)/g, " ");
+	text = text.replace(/(?<!\d)\.(?!\d)/g, " ");
+	text = text.replace(/:/g, " ");
 	text = text.replace(/TIMEP_/g, ":");
 
 	// Restore decimals
@@ -171,6 +183,12 @@ export function flattenForSummary(raw: string): string {
 	for (let i = 0; i < files.length; i++) {
 		const ph = new RegExp(`FILETOKEN${i}`, "g");
 		text = text.replace(ph, files[i]);
+	}
+
+	// Restore protected dates
+	for (let i = 0; i < dateTokens.length; i++) {
+		const ph = new RegExp(`DATETOKEN${i}`, "g");
+		text = text.replace(ph, dateTokens[i]);
 	}
 
 	// Restore URLs

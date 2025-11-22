@@ -57,7 +57,8 @@ function isLikelyDate(t: string): boolean {
 	if (new RegExp(`\\b\\d{1,2}${ORD}\\s+${MONTH}\\s+\\d{4}\\b`).test(s)) return true;
 	if (new RegExp(`\\b${MONTH}\\s+\\d{1,2}${ORD},?\\s+\\d{4}\\b`).test(s)) return true;
 
-	if (/(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})/.test(s)) return true;
+	if (/\b\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4}\b/.test(s)) return true;
+	if (/\b\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2}\b/.test(s)) return true;
 
 	return false;
 }
@@ -66,10 +67,48 @@ export function parseAnyDate(text: string): string | null {
 	const flat = flattenForDates(text);
 	if (!isLikelyDate(flat)) return null;
 
+	const numericDates: Date[] = [];
+	const pushDate = (year: number, month: number, day: number) => {
+		if (month < 1 || month > 12) return;
+		if (day < 1 || day > 31) return;
+		const dt = new Date(Date.UTC(year, month - 1, day));
+		if (Number.isNaN(dt.getTime())) return;
+		numericDates.push(dt);
+	};
+
+	const yearFirst = /\b(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})\b/g;
+	let match: RegExpExecArray | null;
+	while ((match = yearFirst.exec(flat))) {
+		const [, y, m, d] = match;
+		pushDate(Number(y), Number(m), Number(d));
+	}
+
+	const dayFirst = /\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})\b/g;
+	while ((match = dayFirst.exec(flat))) {
+		const [, d, m, yRaw] = match;
+		let year = Number(yRaw);
+		if (yRaw.length === 2) year += year >= 70 ? 1900 : 2000;
+		pushDate(year, Number(m), Number(d));
+	}
+
+	if (numericDates.length > 0) {
+		numericDates.sort((a, b) => a.getTime() - b.getTime());
+		return formatDate(numericDates[0]);
+	}
+
 	const parsed = strictChrono.parse(flat);
 	if (parsed.length === 0) return null;
 
-	return formatDate(parsed[0].start.date());
+	let earliest: Date | null = null;
+	for (const res of parsed) {
+		const d = res.start?.date();
+		if (!d) continue;
+		if (!earliest || d < earliest) {
+			earliest = d;
+		}
+	}
+
+	return earliest ? formatDate(earliest) : null;
 }
 
 export function normalizeDateFromTimestamp(ts: number): string {

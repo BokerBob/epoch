@@ -12,7 +12,7 @@ export const MIN_SCALE = 0.01;
 export const MAX_SCALE = 5;
 export const ZOOM_INTENSITY = 0.003;
 
-export const VERTICAL_PADDING = 200;
+export const VERTICAL_PADDING = 400;
 export const TIMELINE_X = 60;
 export const LINE_EXTRA = 2000;
 
@@ -26,7 +26,7 @@ export const DATE_RECT_RIGHT_EXTRA = 40;
 export const LABEL_OFFSET_X = 10;
 
 export const SUMMARY_MARGIN = 6;
-export const SUMMARY_ROW_HEIGHT = 15;
+export const SUMMARY_ROW_HEIGHT = 12;
 export const SUMMARY_RIGHT_MARGIN = 16;
 export const SUMMARY_OFFSET_X = 16;
 export const SUMMARY_MIN_WIDTH = 40;

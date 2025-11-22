@@ -45,7 +45,14 @@ import {
 } from "./epoch-canvas-constants";
 
 import type { DayLayout, HoverOverlay } from "./epoch-canvas-types";
-import { truncate, dist, mid, mixFont } from "./epoch-canvas-utils";
+import {
+	truncate,
+	dist,
+	mid,
+	mixFont,
+	shouldRenderEntry,
+	entryFileName
+} from "./epoch-canvas-utils";
 
 export class EpochCanvas {
 	private root: HTMLElement;
@@ -72,6 +79,7 @@ export class EpochCanvas {
 	private pinchStartDist = 0;
 	private pinchStartScale = 1;
 	private pinchAnchorWorldY = 0;
+	private dragSource: "mouse" | "touch" | null = null;
 
 	private touchStartX = 0;
 	private touchStartTime = 0;
@@ -115,6 +123,7 @@ export class EpochCanvas {
 	private animFrame: number | null = null;
 
 	private hoverOverlay: HoverOverlay | null = null;
+	private focusClearHandle: number | null = null;
 
 	private resizeObserver: ResizeObserver | null = null;
 
@@ -163,6 +172,37 @@ export class EpochCanvas {
 		this.animDateIndex = null;
 		this.animSummary = null;
 		this.draw();
+	}
+
+	private focusDate(date: Date, highlight: boolean = false) {
+		const rect = this.root.getBoundingClientRect();
+		if (!rect.height) return;
+
+		const today = this.getToday();
+		const diffDays = Math.round(
+			(today.getTime() - date.getTime()) / MS_PER_DAY
+		);
+		const worldY = diffDays * BASE_SPACING;
+		const centerY = rect.height / 2;
+
+		this.targetScale = this.scale;
+		this.targetOffsetY = centerY - worldY * this.scale;
+		this.animatingView = true;
+
+		if (highlight) {
+			this.cancelFocusClear();
+			this.hoverSummary = null;
+			this.hoverDateIndex = diffDays;
+			this.animSummary = null;
+			this.animDateIndex = diffDays;
+			this.hoverTarget = 1;
+			this.focusClearHandle = window.setTimeout(() => {
+				this.focusClearHandle = null;
+				this.clearHover();
+			}, 750);
+		}
+
+		this.requestHoverAnimation();
 	}
 
 	private bind() {
@@ -234,6 +274,7 @@ export class EpochCanvas {
 		if (e.button !== 0) return;
 
 		this.isDragging = true;
+		this.dragSource = "mouse";
 		this.dragStartY = e.clientY;
 		this.dragStartOffsetY = this.offsetY;
 
@@ -256,7 +297,11 @@ export class EpochCanvas {
 		const dt = now - this.lastPanTime;
 		if (dt > 0) {
 			const dyStep = e.clientY - this.lastPanY;
-			this.velocityY = dyStep / dt;
+			if (this.dragSource === "touch") {
+				this.velocityY = dyStep / dt;
+			} else {
+				this.velocityY = 0;
+			}
 			this.lastPanY = e.clientY;
 			this.lastPanTime = now;
 		}
@@ -271,7 +316,9 @@ export class EpochCanvas {
 	}
 
 	private onUp() {
+		if (!this.isDragging) return;
 		this.isDragging = false;
+		this.dragSource = null;
 		this.velocityY = 0;
 	}
 
@@ -327,7 +374,9 @@ export class EpochCanvas {
 				this.touchLongPressTimeout = null;
 			}
 
-			const [t1, t2] = e.touches;
+			const t1 = e.touches.item(0);
+			const t2 = e.touches.item(1);
+			if (!t1 || !t2) return;
 			this.touchMode = "pinch";
 			this.pinchStartDist = dist(t1, t2);
 			this.pinchStartScale = this.scale;
@@ -347,7 +396,9 @@ export class EpochCanvas {
 				clearTimeout(this.touchLongPressTimeout);
 				this.touchLongPressTimeout = null;
 			}
-			const [t1, t2] = e.touches;
+			const t1 = e.touches.item(0);
+			const t2 = e.touches.item(1);
+			if (!t1 || !t2) return;
 			const rect = this.canvas.getBoundingClientRect();
 			const m = mid(t1, t2);
 			const midY = m.y - rect.top;
@@ -378,6 +429,7 @@ export class EpochCanvas {
 			}
 			if (this.touchMode !== "hover") {
 				this.touchMode = "pan";
+				this.dragSource = "touch";
 			}
 			this.touchStartY = t.clientY;
 			this.touchStartOffsetY = this.offsetY;
@@ -458,6 +510,8 @@ export class EpochCanvas {
 			}
 			this.keepHoverAfterMenu = false;
 		}
+
+		this.dragSource = null;
 	}
 
 	private async onClick(e: MouseEvent) {
@@ -592,41 +646,43 @@ export class EpochCanvas {
 		if (day) {
 			const today = this.getToday();
 			const date = this.getDateForIndex(day.index, today);
-			await this.createNoteForDate(date);
+			await this.createNoteForDate(date, false);
 			return;
 		}
 
 		this.animateToToday();
 	}
 
-	private async createNoteForDate(date: Date) {
+	private async createNoteForDate(date: Date, focus: boolean = true) {
 		const app = this.plugin.app;
 
 		const existing = this.getFileForDate(date);
 		if (existing) {
 			await this.openFileAtLine(existing.path, 0);
+			if (focus) this.focusDate(date, true);
 			return;
 		}
 
-		const noteName = this.getNoteNameForDate(date);
-		const folderPath: string = this.plugin.settings?.newNotePath || "";
-		const baseName = noteName || formatDate(date);
-		let path = folderPath ? `${folderPath}/${baseName}.md` : `${baseName}.md`;
+		const { folder, baseName } = this.getNotePathParts(date);
+		const expectedPath = this.getExpectedNotePath(date);
+		let path = expectedPath;
 
 		let counter = 1;
 		while (app.vault.getAbstractFileByPath(path)) {
 			const suffix = ` ${counter++}`;
-			path = folderPath ? `${folderPath}/${baseName}${suffix}.md` : `${baseName}${suffix}.md`;
+			path = folder ? `${folder}/${baseName}${suffix}.md` : `${baseName}${suffix}.md`;
 		}
 
 		const file = await app.vault.create(path, "");
 		await this.openFileAtLine(file.path, 0);
+		if (focus) this.focusDate(date, true);
 	}
 
-	private async openDateNote(date: Date, ev?: MouseEvent) {
+	private async openDateNote(date: Date, ev?: MouseEvent, focus: boolean = true) {
 		const file = this.getFileForDate(date);
 		if (!file) return;
 		await this.openFileAtLine(file.path, 0, ev);
+		if (focus) this.focusDate(date, true);
 	}
 
 	private async openFileAtLine(filePath: string, line: number = 0, ev?: MouseEvent) {
@@ -654,6 +710,7 @@ export class EpochCanvas {
 		app.workspace.revealLeaf(leaf);
 		// @ts-ignore
 		await leaf.openFile(file);
+		app.workspace.setActiveLeaf(leaf, true);
 
 		if (Platform.isMobileApp) {
 			const ws: any = app.workspace;
@@ -666,6 +723,7 @@ export class EpochCanvas {
 		if (!view) return;
 
 		const safeLine = Math.max(0, line);
+		view.editor.focus();
 		view.editor.setCursor({ line: safeLine, ch: 0 });
 		// @ts-ignore
 		view.editor.scrollIntoView(
@@ -695,7 +753,7 @@ export class EpochCanvas {
 	}
 
 	private showSummaryMenu(entry: DateEntry, clientX: number, clientY: number) {
-		const menu = new Menu(this.plugin.app);
+		const menu = new Menu();
 		menu.addItem(item => {
 			item
 				.setTitle("Delete")
@@ -712,7 +770,15 @@ export class EpochCanvas {
 		this.requestHoverAnimation();
 	}
 
+	private cancelFocusClear() {
+		if (this.focusClearHandle != null) {
+			window.clearTimeout(this.focusClearHandle);
+			this.focusClearHandle = null;
+		}
+	}
+
 	private clearHover() {
+		this.cancelFocusClear();
 		if (this.hoverDateIndex == null && this.hoverSummary == null) return;
 		this.hoverDateIndex = null;
 		this.hoverSummary = null;
@@ -722,6 +788,7 @@ export class EpochCanvas {
 	}
 
 	private updateHover(x: number, y: number) {
+		this.cancelFocusClear();
 		for (const d of this.layouts) {
 			for (const s of d.summaryRects) {
 				if (x >= s.x1 && x <= s.x2 && y >= s.y1 && y <= s.y2) {
@@ -813,24 +880,23 @@ export class EpochCanvas {
 		return formatDate(date);
 	}
 
+	private getNotePathParts(date: Date): { folder: string; baseName: string } {
+		const baseName = this.getNoteNameForDate(date) || formatDate(date);
+		const rawFolder = this.plugin.settings?.newNotePath || "";
+		const folder = rawFolder.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+		return { folder, baseName };
+	}
+
+	private getExpectedNotePath(date: Date): string {
+		const { folder, baseName } = this.getNotePathParts(date);
+		return folder ? `${folder}/${baseName}.md` : `${baseName}.md`;
+	}
+
 	private getFileForDate(date: Date): TFile | null {
 		const app = this.plugin.app;
-		const noteName = this.getNoteNameForDate(date);
-		const folderPath: string = this.plugin.settings?.newNotePath || "";
-		const baseName = noteName || formatDate(date);
-		const path = folderPath ? `${folderPath}/${baseName}.md` : `${baseName}.md`;
-
+		const path = this.getExpectedNotePath(date);
 		const direct = app.vault.getAbstractFileByPath(path);
-		if (direct instanceof TFile) return direct;
-
-		const key = formatDate(date);
-		const arr = this.index[key];
-		if (arr?.length) {
-			const f = app.vault.getAbstractFileByPath(arr[0].file);
-			if (f instanceof TFile) return f;
-		}
-
-		return null;
+		return direct instanceof TFile ? direct : null;
 	}
 
 	private requestHoverAnimation() {
@@ -967,7 +1033,8 @@ export class EpochCanvas {
 			const isMonthStart = d === 1 && m !== 0;
 
 			const key = formatDate(date);
-			const entries = this.index[key] || [];
+			const rawEntries = this.index[key] || [];
+			const entries = rawEntries.filter(shouldRenderEntry);
 
 			let label: string | null = null;
 			let kind: "day" | "month" | "year" = "day";
@@ -1064,109 +1131,66 @@ export class EpochCanvas {
 			}
 
 			if (entries.length > 0) {
-				const nextIndex = i + 1;
-				const nextWorldY = nextIndex * BASE_SPACING;
-				const yNext = nextWorldY * this.scale + this.offsetY;
+				const halfSpan = Math.max(
+					SUMMARY_ROW_HEIGHT / 2,
+					(BASE_SPACING * this.scale) / 2 - SUMMARY_MARGIN
+				);
+				const bandHeight = Math.max(SUMMARY_ROW_HEIGHT, halfSpan * 2);
+				const maxRows = Math.max(
+					1,
+					Math.floor(bandHeight / SUMMARY_ROW_HEIGHT)
+				);
+				const itemsPerCol = Math.max(
+					1,
+					Math.min(maxRows, entries.length)
+				);
+				const columnCount = Math.ceil(entries.length / itemsPerCol);
+				const hoverIdxForDay =
+					this.animSummary && this.animSummary.dayIndex === i
+						? this.animSummary.itemIndex
+						: -1;
 
-				if (nextIndex <= maxIndex + 1) {
-					const yA = yScreen;
-					const yB = yNext;
-					const midY = (yA + yB) / 2;
-					const distVal = Math.abs(yB - yA);
+				const rightWidth =
+					w - (TIMELINE_X + SUMMARY_OFFSET_X) - SUMMARY_RIGHT_MARGIN;
 
-					let top: number;
-					let bottom: number;
+				if (rightWidth > SUMMARY_MIN_WIDTH) {
+					const colWidth = Math.min(SUMMARY_MAX_COL_WIDTH, rightWidth / columnCount);
+					const xStart = TIMELINE_X + SUMMARY_OFFSET_X;
 
-					if (distVal > SUMMARY_ROW_HEIGHT * 2 && this.scale > 0.05) {
-						top = Math.min(yA, yB) + SUMMARY_MARGIN;
-						bottom = Math.max(yA, yB) - SUMMARY_MARGIN;
-					} else {
-						const band = SUMMARY_ROW_HEIGHT * 2;
-						top = midY - band / 2;
-						bottom = midY + band / 2;
-					}
+					ctx.textAlign = "left";
 
-					const blockHeightRaw = bottom - top;
-					const blockHeight = Math.max(
-						SUMMARY_ROW_HEIGHT * 2,
-						Math.abs(blockHeightRaw)
-					);
+					for (let col = 0; col < columnCount; col++) {
+						const startIndex = col * itemsPerCol;
+						if (startIndex >= entries.length) break;
+						const endIndex = Math.min(startIndex + itemsPerCol, entries.length);
+						const rowsThisCol = endIndex - startIndex;
+						const hoverRowInCol =
+							hoverIdxForDay >= startIndex && hoverIdxForDay < endIndex
+								? hoverIdxForDay - startIndex
+								: -1;
+						const hasHoverInCol = hoverRowInCol >= 0 && rowsThisCol > 0;
+						const gapHalf = hasHoverInCol
+							? (HOVER_EXTRA_GAP / 2) * this.hoverAnim
+							: 0;
 
-					const maxRows = Math.max(
-						1,
-						Math.floor(blockHeight / SUMMARY_ROW_HEIGHT)
-					);
-					const itemsPerCol = Math.max(
-						1,
-						Math.min(maxRows, entries.length)
-					);
-					const cols = Math.ceil(entries.length / itemsPerCol);
+						let columnHeight = rowsThisCol * SUMMARY_ROW_HEIGHT;
+						if (hasHoverInCol && rowsThisCol > 1) {
+							if (hoverRowInCol > 0) columnHeight += gapHalf;
+							if (hoverRowInCol < rowsThisCol - 1) columnHeight += gapHalf;
+						}
 
-					const hoverIdxForDay =
-						this.animSummary && this.animSummary.dayIndex === i
-							? this.animSummary.itemIndex
-							: null;
-					let hoverCol = -1;
-					let hoverRow = -1;
-					if (hoverIdxForDay != null) {
-						hoverCol = Math.floor(hoverIdxForDay / itemsPerCol);
-						hoverRow = hoverIdxForDay % itemsPerCol;
-					}
+						const yStartCol = yScreen - columnHeight / 2;
+						let yCursor = yStartCol;
 
-					const rightWidth =
-						w - (TIMELINE_X + SUMMARY_OFFSET_X) - SUMMARY_RIGHT_MARGIN;
-
-					if (rightWidth > SUMMARY_MIN_WIDTH) {
-						const colWidth = Math.min(SUMMARY_MAX_COL_WIDTH, rightWidth / cols);
-						const xStart = TIMELINE_X + SUMMARY_OFFSET_X;
-						const bandTop = midY - blockHeight / 2;
-
-						ctx.textAlign = "left";
-
-						for (let idx = 0; idx < entries.length; idx++) {
-							const col = Math.floor(idx / itemsPerCol);
-							const row = idx % itemsPerCol;
-
-							const rowsThisCol = Math.min(
-								itemsPerCol,
-								entries.length - col * itemsPerCol
-							);
-
-							const hasHoverInCol =
-								hoverIdxForDay != null && col === hoverCol;
-
-							let extraBetween: number[] = [];
-							let totalExtra = 0;
-
-							if (hasHoverInCol && rowsThisCol > 1) {
-								extraBetween = new Array(rowsThisCol - 1).fill(0);
-								if (hoverRow > 0 && hoverRow < rowsThisCol) {
-									extraBetween[hoverRow - 1] +=
-										(HOVER_EXTRA_GAP / 2) * this.hoverAnim;
-								}
-								if (hoverRow < rowsThisCol - 1) {
-									extraBetween[hoverRow] +=
-										(HOVER_EXTRA_GAP / 2) * this.hoverAnim;
-								}
-								totalExtra = extraBetween.reduce((a, b) => a + b, 0);
+						for (let row = 0; row < rowsThisCol; row++) {
+							if (hasHoverInCol && row === hoverRowInCol && row > 0) {
+								yCursor += gapHalf;
 							}
 
-							const colHeight = rowsThisCol * SUMMARY_ROW_HEIGHT + totalExtra;
-							const yStartCol = midY - colHeight / 2;
-
-							let prefixExtra = 0;
-							if (hasHoverInCol && rowsThisCol > 1) {
-								for (let k = 0; k < row; k++) {
-									prefixExtra += extraBetween[k] || 0;
-								}
-							}
-
+							const entryIndex = startIndex + row;
+							const entry = entries[entryIndex];
 							const x = xStart + col * colWidth;
-							const yItemCenter =
-								yStartCol +
-								row * SUMMARY_ROW_HEIGHT +
-								prefixExtra +
-								SUMMARY_ROW_HEIGHT / 2;
+							const yItemCenter = yCursor + SUMMARY_ROW_HEIGHT / 2;
 							const yRectTop = yItemCenter - SUMMARY_ROW_HEIGHT / 2;
 							const yRectBottom = yItemCenter + SUMMARY_ROW_HEIGHT / 2;
 
@@ -1175,17 +1199,19 @@ export class EpochCanvas {
 							const summaryHoverT =
 								this.animSummary &&
 								this.animSummary.dayIndex === i &&
-								this.animSummary.itemIndex === idx
+								this.animSummary.itemIndex === entryIndex
 									? this.hoverAnim
 									: 0;
 
 							const summaryColor =
 								summaryHoverT > 0 ? colTextHover : colTextBase;
 
-							const rawSummary = (entries[idx].summary || "").trim();
-							const title = this.getEntryTitle(entries[idx]);
-							const hasSummary = rawSummary.length > 0;
-
+							const rawSummary = (entry.summary || "").trim();
+							const title = this.getEntryTitle(entry) || entryFileName(entry);
+							const isFallbackSummary = rawSummary.length > 0 && rawSummary === title;
+							const effectiveSummary = isFallbackSummary ? "" : rawSummary;
+							const hasRealSummary = effectiveSummary.length > 0;
+							const icon = entry.source === "content" && hasRealSummary ? " 🖋" : "";
 							let renderText: string;
 							let hoverText: string;
 							let truncatedWidth = 0;
@@ -1193,19 +1219,17 @@ export class EpochCanvas {
 							ctx.save();
 							ctx.font = fontSmall;
 
-							if (hasSummary) {
-								const icon = " 🖋 ";
-								const full = rawSummary + icon;
-
+							if (effectiveSummary.length > 0) {
+								const full = effectiveSummary + icon;
 								if (ctx.measureText(full).width <= maxWidth) {
 									renderText = full;
 								} else {
 									const ell = "...";
 									let low = 0;
-									let high = rawSummary.length;
+									let high = effectiveSummary.length;
 									while (low < high) {
 										const mid = (low + high) >> 1;
-										const candidate = rawSummary.slice(0, mid) + ell + icon;
+										const candidate = effectiveSummary.slice(0, mid) + ell + icon;
 										if (ctx.measureText(candidate).width <= maxWidth) {
 											low = mid + 1;
 										} else {
@@ -1213,16 +1237,19 @@ export class EpochCanvas {
 										}
 									}
 									const len = Math.max(0, low - 1);
-									renderText = rawSummary.slice(0, len) + ell + icon;
+									renderText = effectiveSummary.slice(0, len) + ell + icon;
 								}
 
 								truncatedWidth = ctx.measureText(renderText).width;
-								hoverText = full + title;
+								const hoverSuffix = title ? `  ·  ${title}` : "";
+								hoverText = effectiveSummary + icon + hoverSuffix;
 							} else {
-								const truncatedTitle = truncate(title, maxWidth, ctx);
-								renderText = truncatedTitle;
-								truncatedWidth = ctx.measureText(truncatedTitle).width;
-								hoverText = truncatedTitle;
+								const iconWidth = icon ? ctx.measureText(icon).width : 0;
+								const available = Math.max(0, maxWidth - iconWidth);
+								const truncatedTitle = available > 0 ? truncate(title, available, ctx) : "";
+								renderText = truncatedTitle + icon;
+								truncatedWidth = ctx.measureText(truncatedTitle).width + iconWidth;
+								hoverText = renderText;
 							}
 
 							ctx.restore();
@@ -1255,8 +1282,7 @@ export class EpochCanvas {
 									ctx.fillText(renderText, x, yItemCenter);
 								}
 							} else {
-								const summaryColorLine = summaryColor;
-								ctx.strokeStyle = summaryColorLine;
+								ctx.strokeStyle = summaryColor;
 								ctx.lineWidth = 1;
 								const len = Math.max(10, Math.min(maxWidth, truncatedWidth));
 								ctx.beginPath();
@@ -1270,9 +1296,14 @@ export class EpochCanvas {
 								y1: yRectTop - TOUCH_HIT_PAD,
 								x2: x + maxWidth + TOUCH_HIT_PAD,
 								y2: yRectBottom + TOUCH_HIT_PAD,
-								itemIndex: idx,
-								entry: entries[idx]
+								itemIndex: entryIndex,
+								entry
 							});
+
+							yCursor += SUMMARY_ROW_HEIGHT;
+							if (hasHoverInCol && row === hoverRowInCol && row < rowsThisCol - 1) {
+								yCursor += gapHalf;
+							}
 						}
 					}
 				}
@@ -1301,6 +1332,7 @@ export class EpochCanvas {
 	}
 
 	public destroy() {
+		this.cancelFocusClear();
 		if (this.resizeObserver) {
 			this.resizeObserver.disconnect();
 			this.resizeObserver = null;

@@ -2,66 +2,63 @@ import { describe, it, expect } from "vitest";
 
 import { parseAnyDate, normalizeDateFromTimestamp, computeBlocks } from "../indexer/extractor";
 import { flattenForSummary } from "../indexer/flattener";
-import { makeSummary } from "../indexer/summarizer";
-
-const fmt = "dd-MM-yyyy";
 
 describe("DATE PARSING", () => {
 
     	it("parses '12th November 2025'", () => {
-		const r = parseAnyDate("Meet on 12th November 2025", fmt);
-		expect(r).toBe("12-11-2025");
+		const r = parseAnyDate("Meet on 12th November 2025");
+		expect(r).toBe("2025-11-12");
 	});
 
 	it("parses 'November 12th, 2025'", () => {
-		const r = parseAnyDate("Event: November 12th, 2025", fmt);
-		expect(r).toBe("12-11-2025");
+		const r = parseAnyDate("Event: November 12th, 2025");
+		expect(r).toBe("2025-11-12");
 	});
 
 	it("parses ambiguous slash 12/11/2025 as D/M/Y", () => {
-		const r = parseAnyDate("Date: 12/11/2025", fmt);
-		expect(r).toBe("12-11-2025");
+		const r = parseAnyDate("Date: 12/11/2025");
+		expect(r).toBe("2025-11-12");
 	});
 
 	it("extracts simple date", () => {
-		const r = parseAnyDate("Event on 8/11/2025", fmt);
-		expect(r).toBe("08-11-2025");
+		const r = parseAnyDate("Event on 8/11/2025");
+		expect(r).toBe("2025-11-08");
 	});
 
     it("extracts simple date", () => {
-		const r = parseAnyDate("Event on 03.4.2025", fmt);
-		expect(r).toBe("03-04-2025");
+		const r = parseAnyDate("Event on 03.4.2025");
+		expect(r).toBe("2025-04-03");
 	});
 
 	it("ignores '6000 years ago'", () => {
-		const r = parseAnyDate("Humans lived 6000 years ago", fmt);
+		const r = parseAnyDate("Humans lived 6000 years ago");
 		expect(r).toBe(null);
 	});
 
 	it("ignores fractional like 8/10", () => {
-		const r = parseAnyDate("Handstand 8/10 times", fmt);
+		const r = parseAnyDate("Handstand 8/10 times");
 		expect(r).toBe(null);
 	});
 
 	it("ignores ranges 4–5", () => {
-		const r = parseAnyDate("Warmup 4–5 reps", fmt);
+		const r = parseAnyDate("Warmup 4–5 reps");
 		expect(r).toBe(null);
 	});
 
 	it("ignores time-like 02:00", () => {
-		const r = parseAnyDate("At 02:00 focus", fmt);
+		const r = parseAnyDate("At 02:00 focus");
 		expect(r).toBe(null);
 	});
 
 	it("filename date parsing", () => {
-		const r = parseAnyDate("Log_2025-10-31.md", fmt);
-		expect(r).toBe("31-10-2025");
+		const r = parseAnyDate("Log_2025-10-31.md");
+		expect(r).toBe("2025-10-31");
 	});
 
 	it("timestamp formatting", () => {
 		const d = new Date(2025, 10, 20); // 20 Nov 2025
-		const r = normalizeDateFromTimestamp(+d, fmt);
-		expect(r).toBe("20-11-2025");
+		const r = normalizeDateFromTimestamp(+d);
+		expect(r).toBe("2025-11-20");
 	});
 
 	it("no false positives in big texts", () => {
@@ -70,7 +67,7 @@ describe("DATE PARSING", () => {
 			6–8 hours of work,
 			and sometimes 02:00 in the morning.
 		`;
-		const r = parseAnyDate(txt, fmt);
+		const r = parseAnyDate(txt);
 		expect(r).toBe(null);
 	});
 });
