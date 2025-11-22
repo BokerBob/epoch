@@ -50,6 +50,7 @@ import {
 	dist,
 	mid,
 	mixFont,
+	withFontWeight,
 	shouldRenderEntry,
 	entryFileName
 } from "./epoch-canvas-utils";
@@ -94,6 +95,7 @@ export class EpochCanvas {
 	private index: EpochIndex = {};
 
 	private layouts: DayLayout[] = [];
+	private activeFilePath: string | null = null;
 
 	private handleWheel = (e: WheelEvent) => this.onWheel(e);
 	private handleMouseDown = (e: MouseEvent) => this.onDown(e);
@@ -143,6 +145,7 @@ export class EpochCanvas {
 
 		this.canvas = root.createEl("canvas");
 		this.ctx = this.canvas.getContext("2d")!;
+		this.activeFilePath = this.plugin?.app?.workspace?.getActiveFile?.()?.path ?? null;
 
 		this.refreshIndex();
 		this.bind();
@@ -155,6 +158,12 @@ export class EpochCanvas {
 
 	public refreshIndex() {
 		this.index = this.plugin.indexer.index as EpochIndex;
+		this.draw();
+	}
+
+	public setActiveFile(path: string | null) {
+		if (this.activeFilePath === path) return;
+		this.activeFilePath = path;
 		this.draw();
 	}
 
@@ -992,6 +1001,7 @@ export class EpochCanvas {
 			css.getPropertyValue("--epoch-font-small-hover") || fontSmall;
 		const colSummaryHoverBg =
 			css.getPropertyValue("--epoch-bg").trim();
+		const colRelated = css.getPropertyValue("--epoch-related-color").trim() || colTextHover;
 
 		this.hoverOverlay = null;
 
@@ -1018,6 +1028,8 @@ export class EpochCanvas {
 
 		const layouts: DayLayout[] = [];
 
+		const activePath = this.activeFilePath;
+
 		for (let i = minIndex; i <= maxIndex; i++) {
 			const isToday = i === 0;
 
@@ -1035,6 +1047,7 @@ export class EpochCanvas {
 			const key = formatDate(date);
 			const rawEntries = this.index[key] || [];
 			const entries = rawEntries.filter(shouldRenderEntry);
+			const hasActiveEntry = !!(activePath && entries.some(e => e.file === activePath));
 
 			let label: string | null = null;
 			let kind: "day" | "month" | "year" = "day";
@@ -1074,9 +1087,15 @@ export class EpochCanvas {
 			const dateHoverT =
 				this.animDateIndex === i ? this.hoverAnim : 0;
 
-			const dateColor =
-				dateHoverT > 0 ? colTextHover : colTextBase;
-			const dateFont = mixFont(fontMain, fontMainHover, dateHoverT);
+			const dateColor = dateHoverT > 0
+				? colTextHover
+				: hasActiveEntry
+				? colRelated
+				: colTextBase;
+			let dateFont = mixFont(fontMain, fontMainHover, dateHoverT);
+			if (hasActiveEntry) {
+				dateFont = withFontWeight(dateFont, "600");
+			}
 
 			const hasVisibleDate = showDot || !!label || isToday;
 
@@ -1203,24 +1222,27 @@ export class EpochCanvas {
 									? this.hoverAnim
 									: 0;
 
-							const summaryColor =
-								summaryHoverT > 0 ? colTextHover : colTextBase;
+							const isActiveEntry = hasActiveEntry && entry.file === activePath;
+							const summaryColor = summaryHoverT > 0
+								? colTextHover
+								: isActiveEntry
+								? colRelated
+								: colTextBase;
 
 							const rawSummary = (entry.summary || "").trim();
 							const title = this.getEntryTitle(entry) || entryFileName(entry);
 							const isFallbackSummary = rawSummary.length > 0 && rawSummary === title;
 							const effectiveSummary = isFallbackSummary ? "" : rawSummary;
-							const hasRealSummary = effectiveSummary.length > 0;
-							const icon = entry.source === "content" && hasRealSummary ? " 🖋" : "";
 							let renderText: string;
 							let hoverText: string;
 							let truncatedWidth = 0;
 
 							ctx.save();
-							ctx.font = fontSmall;
+							const summaryFont = isActiveEntry ? withFontWeight(fontSmall, "600") : fontSmall;
+							ctx.font = summaryFont;
 
 							if (effectiveSummary.length > 0) {
-								const full = effectiveSummary + icon;
+								const full = effectiveSummary;
 								if (ctx.measureText(full).width <= maxWidth) {
 									renderText = full;
 								} else {
@@ -1229,7 +1251,7 @@ export class EpochCanvas {
 									let high = effectiveSummary.length;
 									while (low < high) {
 										const mid = (low + high) >> 1;
-										const candidate = effectiveSummary.slice(0, mid) + ell + icon;
+										const candidate = effectiveSummary.slice(0, mid) + ell;
 										if (ctx.measureText(candidate).width <= maxWidth) {
 											low = mid + 1;
 										} else {
@@ -1237,18 +1259,16 @@ export class EpochCanvas {
 										}
 									}
 									const len = Math.max(0, low - 1);
-									renderText = effectiveSummary.slice(0, len) + ell + icon;
+									renderText = effectiveSummary.slice(0, len) + ell;
 								}
 
 								truncatedWidth = ctx.measureText(renderText).width;
 								const hoverSuffix = title ? `  ·  ${title}` : "";
-								hoverText = effectiveSummary + icon + hoverSuffix;
+								hoverText = effectiveSummary + hoverSuffix;
 							} else {
-								const iconWidth = icon ? ctx.measureText(icon).width : 0;
-								const available = Math.max(0, maxWidth - iconWidth);
-								const truncatedTitle = available > 0 ? truncate(title, available, ctx) : "";
-								renderText = truncatedTitle + icon;
-								truncatedWidth = ctx.measureText(truncatedTitle).width + iconWidth;
+								const truncatedTitle = maxWidth > 0 ? truncate(title, maxWidth, ctx) : "";
+								renderText = truncatedTitle;
+								truncatedWidth = ctx.measureText(renderText).width;
 								hoverText = renderText;
 							}
 
@@ -1256,11 +1276,14 @@ export class EpochCanvas {
 
 							if (this.scale >= SUMMARY_MIN_SCALE) {
 								if (summaryHoverT > 0) {
-									const hoverFontStr = mixFont(
+									let hoverFontStr = mixFont(
 										fontSmall,
 										fontSmallHover,
 										summaryHoverT
 									);
+									if (isActiveEntry) {
+										hoverFontStr = withFontWeight(hoverFontStr, "600");
+									}
 
 									ctx.save();
 									ctx.font = hoverFontStr;
@@ -1278,7 +1301,7 @@ export class EpochCanvas {
 									};
 								} else {
 									ctx.fillStyle = summaryColor;
-									ctx.font = fontSmall;
+									ctx.font = summaryFont;
 									ctx.fillText(renderText, x, yItemCenter);
 								}
 							} else {

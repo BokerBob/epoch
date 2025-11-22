@@ -29,6 +29,12 @@ export class EpochView extends ItemView {
 		this.container = this.contentEl.createDiv("epoch-container");
 		const root = this.container.createDiv("epoch-root");
 		this.canvas = new EpochCanvas(root, this.plugin);
+		const updateActiveFile = () => {
+			const file = this.app.workspace.getActiveFile();
+			this.canvas?.setActiveFile(file ? file.path : null);
+		};
+		updateActiveFile();
+		this.registerEvent(this.app.workspace.on("active-leaf-change", updateActiveFile));
 
 		requestAnimationFrame(() => {
 			this.canvas.initSize();

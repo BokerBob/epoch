@@ -86,7 +86,7 @@ export class EpochSettingTab extends PluginSettingTab {
 		summarySetting
 			.addSlider(slider => {
 				slider
-					.setLimits(0, 12, 1)
+					.setLimits(0, 10, 1)
 					.setValue(currentSummaryWords)
 					.setDynamicTooltip()
 					.onChange(async (value) => {

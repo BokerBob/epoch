@@ -45,6 +45,21 @@ export default class EpochPlugin extends Plugin {
 			callback: () => this.rebuildIndexWithProgress()
 		});
 
+		this.addCommand({
+			id: "epoch-clear-tracked-changes",
+			name: "Clear tracked changes",
+			callback: async () => {
+				const changed = this.indexer.clearTrackedChanges();
+				if (!changed) {
+					new Notice("No tracked changes to clear");
+					return;
+				}
+				await this.persist();
+				new Notice("Tracked changes cleared");
+				this.refreshEpochViews();
+			}
+		});
+
 		this.addRibbonIcon("hourglass", "Open epoch view", () => {
 			this.openEpochView();
 		});

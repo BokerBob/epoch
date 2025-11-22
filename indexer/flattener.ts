@@ -3,10 +3,10 @@ export function flattenForDates(raw: string): string {
 
 	let text = raw;
 
-	return text
-		// frontmatter
-		.replace(/^---[\s\S]*?---/gm, " ")
+	// Remove YAML frontmatter at the start (supports BOM and Windows newlines)
+	text = text.replace(/^[\uFEFF]?---\r?\n[\s\S]*?\r?\n---\r?\n?/m, " ");
 
+	return text
 		// Obsidian comments
 		.replace(/%%[\s\S]*?%%/g, " ")
 

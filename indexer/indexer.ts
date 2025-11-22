@@ -9,11 +9,7 @@ import {
 	SerializedEpochIndex,
 	StoredFileIndexData
 } from "./types";
-import {
-	parseAnyDate,
-	normalizeDateFromTimestamp,
-	computeBlocks
-} from "./extractor";
+import { parseAnyDate, normalizeDateFromTimestamp } from "./extractor";
 import { makeSummary } from "./summarizer";
 import { addEntries, removeEntriesForFile, sortIndex } from "./indexer-utils";
 import { formatDate } from "utils";
@@ -99,7 +95,8 @@ export class Indexer {
 		};
 
 		const content = isMd ? await this.plugin.app.vault.read(file) : "";
-		const lines = isMd ? content.split(/\r?\n/) : [];
+		const rawLines = isMd ? content.split(/\r?\n/) : [];
+		const lines = isMd ? this.stripFrontmatterLines(rawLines) : [];
 
 		fileData.cdate = this.buildFileDateEntry(
 			file,
@@ -134,6 +131,21 @@ export class Indexer {
 	removeFile(path: string) {
 		delete this.files[path];
 		removeEntriesForFile(this.index, path);
+	}
+
+	clearTrackedChanges(): boolean {
+		let changed = false;
+		for (const [path, data] of Object.entries(this.files)) {
+			if (!data) continue;
+			if (!data.trackedDates || Object.keys(data.trackedDates).length === 0) continue;
+			data.trackedDates = {};
+			changed = true;
+			this.updateAggregatedEntries(path, { skipSort: true });
+		}
+		if (changed) {
+			this.index = sortIndex(this.index);
+		}
+		return changed;
 	}
 
 	async renameFile(oldPath: string, newPath: string) {
@@ -202,20 +214,20 @@ export class Indexer {
 	}
 
 	private buildContentDates(file: TFile, lines: string[]): FileDateEntry[] {
-		const blocks = computeBlocks(lines);
 		const entries: FileDateEntry[] = [];
 
-		for (const block of blocks) {
-			const text = this.extractText(lines, block.start, block.end);
-			if (!text.trim()) continue;
-			const date = parseAnyDate(text);
+		for (let i = 0; i < lines.length; i++) {
+			const rawLine = lines[i] ?? "";
+			const trimmed = rawLine.trim();
+			if (!trimmed) continue;
+			const date = parseAnyDate(rawLine);
 			if (!date) continue;
 			entries.push({
 				date,
 				file: file.path,
-				blockStart: block.start,
-				blockEnd: block.end,
-				summary: this.resolveSummaryForFile(file.path, text),
+				blockStart: i,
+				blockEnd: i,
+				summary: this.resolveSummaryForFile(file.path, rawLine),
 				source: "content"
 			});
 		}
@@ -230,25 +242,25 @@ export class Indexer {
 		previousSnapshot: BlockSnapshot[]
 	) {
 		const today = formatDate(this.today());
-		const blocks = computeBlocks(lines);
 		const previousMap = new Map(
 			previousSnapshot.map(item => [`${item.start}:${item.end}`, item])
 		);
 		const entries: FileDateEntry[] = [];
 
-		for (const block of blocks) {
-			const text = this.extractText(lines, block.start, block.end);
-			if (!text.trim()) continue;
-			const key = `${block.start}:${block.end}`;
-			const hash = this.hashText(text);
+		for (let i = 0; i < lines.length; i++) {
+			const rawLine = lines[i] ?? "";
+			const trimmed = rawLine.trim();
+			if (!trimmed) continue;
+			const key = `${i}:${i}`;
+			const hash = this.hashText(trimmed);
 			const previous = previousMap.get(key);
 			if (previous && previous.hash === hash) continue;
 			entries.push({
 				date: today,
 				file: file.path,
-				blockStart: block.start,
-				blockEnd: block.end,
-				summary: this.resolveSummaryForFile(file.path, text),
+				blockStart: i,
+				blockEnd: i,
+				summary: this.resolveSummaryForFile(file.path, rawLine),
 				source: "tracked"
 			});
 		}
@@ -257,15 +269,12 @@ export class Indexer {
 
 		const existing = data.trackedDates[today] ?? [];
 
-		const shouldMerge = (a: FileDateEntry, b: FileDateEntry) => {
-			return (
-				a.blockStart <= b.blockEnd + 1 &&
-				b.blockStart <= a.blockEnd + 1
-			);
+		const shouldReplace = (a: FileDateEntry, b: FileDateEntry) => {
+			return a.blockStart <= b.blockEnd && b.blockStart <= a.blockEnd;
 		};
 
 		const retained = existing.filter(existingEntry =>
-			entries.every(newEntry => !shouldMerge(existingEntry, newEntry))
+			entries.every(newEntry => !shouldReplace(existingEntry, newEntry))
 		);
 
 		const combined = [...retained, ...entries].sort(
@@ -277,9 +286,20 @@ export class Indexer {
 
 	private mergeConsecutive(entries: FileDateEntry[], lines: string[]): FileDateEntry[] {
 		if (entries.length === 0) return [];
-		const sorted = entries.slice().sort((a, b) => a.blockStart - b.blockStart);
+		const sorted = entries
+			.slice()
+			.sort((a, b) => {
+				if (a.blockStart !== b.blockStart) return a.blockStart - b.blockStart;
+				return a.blockEnd - b.blockEnd;
+			});
 		const merged: FileDateEntry[] = [];
 		let current = { ...sorted[0] };
+
+		const pushCurrent = () => {
+			const text = this.extractText(lines, current.blockStart, current.blockEnd);
+			const summary = this.resolveSummary(current, text);
+			merged.push({ ...current, summary });
+		};
 
 		for (let i = 1; i < sorted.length; i++) {
 			const next = sorted[i];
@@ -288,44 +308,62 @@ export class Indexer {
 				next.file === current.file &&
 				next.source === current.source
 			) {
+				current.blockStart = Math.min(current.blockStart, next.blockStart);
 				current.blockEnd = Math.max(current.blockEnd, next.blockEnd);
 			} else {
-				const summary = this.resolveSummary(
-					current,
-					this.extractText(lines, current.blockStart, current.blockEnd)
-				);
-				merged.push({ ...current, summary });
+				pushCurrent();
 				current = { ...next };
 			}
 		}
 
-		const summary = this.resolveSummary(
-			current,
-			this.extractText(lines, current.blockStart, current.blockEnd)
-		);
-		merged.push({ ...current, summary });
+		pushCurrent();
 		return merged;
 	}
 
 	private buildBlockSnapshot(lines: string[]): BlockSnapshot[] {
-		const blocks = computeBlocks(lines);
-		return blocks.map(b => {
-			const text = this.extractText(lines, b.start, b.end);
-			return {
-				start: b.start,
-				end: b.end,
-				hash: this.hashText(text),
-				text: text.slice(0, 2000)
-			};
-		});
+		const snapshot: BlockSnapshot[] = [];
+		for (let i = 0; i < lines.length; i++) {
+			const rawLine = lines[i] ?? "";
+			const trimmed = rawLine.trim();
+			if (!trimmed) continue;
+			snapshot.push({
+				start: i,
+				end: i,
+				hash: this.hashText(trimmed),
+				text: trimmed.slice(0, 2000)
+			});
+		}
+		return snapshot;
 	}
 
-	private updateAggregatedEntries(filePath: string) {
+	private stripFrontmatterLines(lines: string[]): string[] {
+		if (!lines || lines.length === 0) return [];
+		const out = lines.slice();
+		const first = out[0] ? out[0].trimStart() : "";
+		if (!first.startsWith("---")) return out;
+		let endIndex = -1;
+		for (let i = 1; i < out.length; i++) {
+			const line = out[i]?.trim();
+			if (line === "---") {
+				endIndex = i;
+				break;
+			}
+		}
+		if (endIndex === -1) return out;
+		for (let i = 0; i <= endIndex; i++) {
+			out[i] = "";
+		}
+		return out;
+	}
+
+	private updateAggregatedEntries(filePath: string, options: { skipSort?: boolean } = {}) {
 		removeEntriesForFile(this.index, filePath);
 
 		const data = this.files[filePath];
 		if (!data) {
-			this.index = sortIndex(this.index);
+			if (!options.skipSort) {
+				this.index = sortIndex(this.index);
+			}
 			return;
 		}
 
@@ -347,7 +385,9 @@ export class Indexer {
 		}
 
 		addEntries(this.index, entries);
-		this.index = sortIndex(this.index);
+		if (!options.skipSort) {
+			this.index = sortIndex(this.index);
+		}
 	}
 
 	private normalizeFileIndexData(data: StoredFileIndexData): FileIndexData {

@@ -90,6 +90,18 @@ export function mixFont(base: string, hover: string, t: number): string {
 	return `${size.toFixed(2)}px${b.rest}`;
 }
 
+export function withFontWeight(font: string, weight: string): string {
+	const parsed = parseFontSize(font);
+	const rest = parsed.rest.trimStart();
+	const weightPattern = /^(thin|extra-light|ultra-light|light|normal|regular|medium|semi-bold|demi-bold|bold|extra-bold|ultra-bold|heavy|black|[1-9]00)\b/i;
+	let remainder = rest;
+	if (weightPattern.test(rest)) {
+		const firstSpace = rest.indexOf(" ");
+		remainder = firstSpace >= 0 ? rest.slice(firstSpace + 1) : "";
+	}
+	return `${weight} ${parsed.size}px${remainder ? " " + remainder : ""}`.trimEnd();
+}
+
 export function shouldRenderEntry(entry: DateEntry): boolean {
 	if (!entry) return false;
 	return true;
